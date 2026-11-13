@@ -208,6 +208,12 @@ Build notes:
 
 ## Tests
 
+Coverage and code analysis:
+- **Coverage report:** `./gradlew :app:createDebugUnitTestCoverageReport` writes a JaCoCo report to `app/build/reports/coverage/test/debug/` (HTML and XML).
+- **SonarQube:** `./gradlew testDebugUnitTest sonar -Dsonar.token=<token>` runs the coverage report first and sends it to the server set in `build.gradle.kts` (`localhost:9000` by default).
+- **Java 21 needed for Sonar:** the scanner requires it. Android Studio's bundled JBR works, e.g. in PowerShell: `$env:JAVA_HOME = "<Android Studio>\jbr"`.
+- **Keep the token out of the repo:** pass it on the command line or in the `SONAR_TOKEN` environment variable, never in a committed file.
+
 Unit tests (JVM, `./gradlew :app:testDebugUnitTest`):
 - **`CaptureParsersTest`** covers:
   - Notification parsing for Google Wallet, UOB card / PayNow out / PayNow in, ShopBack payment and cashback, FairPrice Pay, SimplyGo fares and top-ups, and the generic parser.

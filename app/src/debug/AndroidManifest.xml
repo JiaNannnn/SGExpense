@@ -1,7 +1,12 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!-- Debug builds only. DUMP is held by adb's shell, not by ordinary apps. -->
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
-    <application>
+    <!-- Same values as the main manifest; repeated so code scanners checking this file alone see them. -->
+    <application
+        android:allowBackup="true"
+        android:fullBackupContent="@xml/backup_rules"
+        android:dataExtractionRules="@xml/data_extraction_rules"
+        android:usesCleartextTraffic="false">
         <receiver
             android:name=".debug.SimulateNotificationReceiver"
             android:exported="true"

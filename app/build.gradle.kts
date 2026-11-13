@@ -21,6 +21,10 @@ android {
     }
 
     buildTypes {
+        debug {
+            // JaCoCo coverage for JVM unit tests → createDebugUnitTestCoverageReport (read by Sonar).
+            enableUnitTestCoverage = true
+        }
         release {
             isMinifyEnabled = true
             isShrinkResources = true
