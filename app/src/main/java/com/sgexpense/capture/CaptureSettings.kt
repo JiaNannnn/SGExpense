@@ -17,6 +17,14 @@ class CaptureSettings(private val context: Context) {
         get() = prefs.getBoolean(KEY_ENABLED, true)
         set(v) { prefs.edit().putBoolean(KEY_ENABLED, v).apply() }
 
+    /** Ask the user for the amount when a UOB transaction alert doesn't include one. */
+    var promptMissingAmount: Boolean
+        get() = prefs.getBoolean(KEY_PROMPT_MISSING, true)
+        set(v) { prefs.edit().putBoolean(KEY_PROMPT_MISSING, v).apply() }
+
+    /** Whether SG Expense may post its own notifications (needed for the amount prompt). */
+    fun canPostNotifications(): Boolean = NotificationManagerCompat.from(context).areNotificationsEnabled()
+
     /**
      * Apps added to the defaults in a later version are switched on once for existing users,
      * without re-adding anything the user unticked.
@@ -49,6 +57,7 @@ class CaptureSettings(private val context: Context) {
         private const val KEY_WATCHED = "watched_packages"
         private const val KEY_ENABLED = "enabled"
         private const val KEY_OFFERED = "offered_defaults"
+        private const val KEY_PROMPT_MISSING = "prompt_missing_amount"
 
         /** Known package names; extra UOB variants are harmless if not installed. */
         val KNOWN_APPS = linkedMapOf(

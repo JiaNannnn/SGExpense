@@ -1,6 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
+    <!-- SG Expense's own "add amount" prompts for UOB alerts without an amount (Android 13+) -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+
     <!-- Lets the "Watched apps" picker list launcher apps on Android 11+ -->
     <queries>
         <intent>
@@ -49,6 +52,20 @@
                 <data android:mimeType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" />
             </intent-filter>
         </activity>
+
+        <!-- Popup for typing a missing amount; floats over whatever app is open -->
+        <activity
+            android:name=".ui.quickadd.QuickAddActivity"
+            android:exported="false"
+            android:excludeFromRecents="true"
+            android:taskAffinity=""
+            android:launchMode="singleTop"
+            android:theme="@style/Theme.SgExpense.Translucent"
+            android:windowSoftInputMode="adjustResize|stateVisible" />
+
+        <receiver
+            android:name=".capture.AmountPromptReceiver"
+            android:exported="false" />
 
         <service
             android:name=".capture.PaymentNotificationListener"

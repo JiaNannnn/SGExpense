@@ -26,12 +26,43 @@ object Patterns {
     /** Amount with an explicit currency marker: S$12.50, SGD 12.50, $12.50, SGD12 */
     val AMOUNT = Regex("""(?i)(?<![A-Z])(?:S\$|SG\$|SGD|\$)\s?(${Money.NUMBER_PATTERN})""")
 
-    private val NOISE = Regex(
-        """(?i)\b(otp|one[- ]time (pass(word|code)|pin)|verification code|security code|log(ged)?[- ]?in|promo|promotion|voucher|% off|deals?|""" +
-            """sale|earn up to|up to \S+ cashback|win|limited[- ]time|giveaway|statement is ready|e-?statement|bill is due|due date|""" +
-            """minimum payment|reminder|requested|request to pay|is requesting|declined|unsuccessful|failed|was not successful|not processed|""" +
-            """apply now|pre-approved|invite|refer)\b"""
+    /** Never a completed payment, whatever else the text says. */
+    private val SECURITY_NOISE = Regex(
+        """(?i)\b(otp|one[- ]time (pass(word|code)|pin)|verification code|security code|log(ged)?[- ]?in|statement is ready|e-?statement|""" +
+            """bill is due|due date|minimum payment|reminder|requested|request to pay|is requesting|declined|unsuccessful|failed|""" +
+            """was not successful|not processed)\b"""
     )
+
+    /**
+     * Marketing wording. Only applied when the text doesn't also read like a confirmed payment, so a real alert
+     * "at FLASH COFFEE" or "at SALE..." still gets through.
+     */
+    private val PROMO = Regex(
+        """(?i)(\b(promo(tion)?s?|e-?vouchers?|vouchers?|coupons?|deals?|sale|flash|discount(s|ed)?|clearance|""" +
+            """shop now|buy now|order now|book now|grab (it|yours|them)|save (up to|big|more)|up to \S+ (off|cashback)|earn up to|""" +
+            """off (your|all|selected|storewide|every)|free (gift|delivery|shipping|item)|1[- ]for[- ]1|buy \d+,? get|""" +
+            """min(imum)? spend|spend (s\$|\$|sgd)\s?\d|members?['’]? (price|deals?|exclusive)|exclusive|limited[- ](time|offer|stock|period)|""" +
+            """hurry|last (chance|day|call)|ends? (today|tonight|soon|this)|don['’]t miss|while stocks last|lucky draw|giveaway|contest|""" +
+            """win|new arrivals?|treat yourself|stock up|apply now|pre-approved|invite|refer|weekly|weekend|""" +
+            """only (at )?(s\$|\$)|from (just |only )?(s\$|\$)|starting (at|from)|now (at|only) (s\$|\$)|u\.?p\.? ?(s\$|\$))\b)|""" +
+            """\d+\s?%\s?off|(s\$|\$)\s?\d+(\.\d{1,2})?\s?off\b"""
+    )
+
+    /** Wording that only appears when money has actually moved. */
+    private val CONFIRMED = Regex(
+        """(?i)(a transaction of|was made (with|on|using)|\byou(['’]ve| have)? (made|paid|sent|spent|received|transferred)\b|""" +
+            """payment (was |is |has been )?(successful|completed?|made|received|confirmed|approved)|""" +
+            """(successful(ly)?|completed) (paid|payment|purchase|transfer)|transfer (was |is |has been )?successful|""" +
+            """(has been|was) (charged|debited|credited|deducted|paid|transferred)|charged (to|on) your|debited from|credited (to|into)|""" +
+            """payment of (s\$|\$|sgd)|e-?receipt|receipt (for|no\.?|#)|order (#|no\.?|number)|""" +
+            """thank you for (your )?(payment|purchase)|fares? (of|charged)|topped up|top[- ]?up (of|successful)|""" +
+            """(visa|mastercard|amex|card|account|a/c)\D{0,20}\d{4}\b)"""
+    )
+
+    fun isSecurityNoise(text: String) = SECURITY_NOISE.containsMatchIn(text)
+    fun isPromo(text: String) = PROMO.containsMatchIn(text)
+    fun isConfirmedPayment(text: String) = CONFIRMED.containsMatchIn(text)
+    fun isNoise(text: String) = isSecurityNoise(text) || (isPromo(text) && !isConfirmedPayment(text))
     private val INCOMING = Regex("""(?i)\b(received|credited|incoming|deposit(ed)?|has been added|top[- ]?up received|you got)\b""")
     private val REFUND = Regex("""(?i)\b(refund(ed)?|reversal|reversed)\b""")
     private val PAYNOW = Regex("""(?i)pay\s?now""")
@@ -40,7 +71,6 @@ object Patterns {
 
     fun amounts(text: String): List<Long> = AMOUNT.findAll(text).mapNotNull { Money.parseCents(it.groupValues[1]) }.filter { it > 0 }.toList()
     fun firstAmount(text: String): Long? = amounts(text).firstOrNull()
-    fun isNoise(text: String) = NOISE.containsMatchIn(text)
     fun isIncoming(text: String) = INCOMING.containsMatchIn(text)
     fun isRefund(text: String) = REFUND.containsMatchIn(text)
     fun isPayNow(text: String) = PAYNOW.containsMatchIn(text)
@@ -55,7 +85,7 @@ object Patterns {
 
     fun accountLast4(text: String): String? = ACCOUNT_LAST4.find(text)?.groupValues?.get(1)
 
-    private val STOP = """(?=\s+(?:on|at|via|from|to|using|with|for|ref|reference)\b|\s+\d{1,2}[:/]\d|[.,;!(]|\s+-\s|${'$'}|\n)"""
+    private val STOP = """(?=\s+(?:on|at|via|from|to|in|into|using|with|for|ref|reference)\b|\s+\d{1,2}[:/]\d|[.,;!(]|\s+-\s|${'$'}|\n)"""
 
     /** Text after a keyword like "at", "to", "from", up to the next stop word. */
     fun after(keyword: String, text: String): String? {
@@ -150,6 +180,70 @@ object UobParser : NotificationParser {
     }
 }
 
+/** What we can tell about a bank alert that has no amount; the user fills in the rest. */
+data class MissingAmountHint(
+    val type: TxType,
+    val paymentMethod: PaymentMethod,
+    val merchant: String,
+    val account: String?,
+    /** Short description for the prompt, e.g. "UOB PayNow transfer". */
+    val label: String,
+)
+
+/**
+ * UOB's PayNow notifications often say only that a transfer happened, with no amount. These are
+ * turned into a prompt so the user can type the amount instead of the payment being lost.
+ */
+object UobMissingAmount {
+    private val TXN = Regex(
+        """(?i)\b(pay\s?now|transfer(red|s)?|transaction|payment|paid|sent|received|debited|credited|purchase|spent|fast|giro|""" +
+            """withdraw(al|n)?|money (in|out)|funds?)\b"""
+    )
+    /** Account/service messages that mention transfers but aren't one. */
+    private val NOT_A_TXN = Regex(
+        """(?i)\b(limits?|activat(e|ed|ion)|regist(er|ered|ration)|link(ed)? your|set ?up|update|upgrade|maintenance|downtime|""" +
+            """new device|nickname|biometric|password|pin|profile|scam|tips?|learn more|did you know|how to|introducing)\b"""
+    )
+
+    fun hint(title: String, text: String): MissingAmountHint? {
+        val all = "$title\n$text"
+        if (Patterns.firstAmount(all) != null) return null
+        if (Patterns.isNoise(all) || !TXN.containsMatchIn(all) || NOT_A_TXN.containsMatchIn(all)) return null
+        val payNow = Patterns.isPayNow(all)
+        val refund = Patterns.isRefund(all)
+        val incoming = !refund && Patterns.isIncoming(all)
+        val card = Patterns.cardLast4(all)
+        val acct = Patterns.accountLast4(all)
+        val transfer = payNow || Regex("""(?i)\b(transfer|fast|sent|giro|funds?)\b""").containsMatchIn(all)
+        val method = when {
+            payNow -> PaymentMethod.PAYNOW
+            transfer -> PaymentMethod.BANK_TRANSFER
+            card != null || Regex("""(?i)\bcard\b""").containsMatchIn(all) -> PaymentMethod.CARD
+            else -> PaymentMethod.OTHER
+        }
+        val merchant = when {
+            incoming -> Patterns.after("from", all)
+            transfer -> Patterns.after("to", all) ?: Patterns.after("at", all)
+            else -> Patterns.after("at", all) ?: Patterns.after("to", all)
+        }.orEmpty()
+        val account = when {
+            card != null && method == PaymentMethod.CARD -> "UOB Card •${card.second}"
+            acct != null -> "UOB a/c •$acct"
+            else -> null
+        }
+        val type = when { refund -> TxType.REFUND; incoming -> TxType.INCOME; else -> TxType.EXPENSE }
+        val label = "UOB " + when {
+            incoming && payNow -> "PayNow received"
+            incoming -> "money received"
+            payNow -> "PayNow transfer"
+            method == PaymentMethod.BANK_TRANSFER -> "transfer"
+            method == PaymentMethod.CARD -> "card payment"
+            else -> "transaction"
+        }
+        return MissingAmountHint(type, method, merchant, account, label)
+    }
+}
+
 /** ShopBack Pay payments and cashback confirmations. Promotions are ignored. */
 object ShopBackParser : NotificationParser {
     private val CASHBACK = Regex("""(?i)cashback""")
@@ -159,7 +253,8 @@ object ShopBackParser : NotificationParser {
     override fun parse(title: String, text: String): ParsedPayment? {
         val all = "$title\n$text"
         val amount = Patterns.firstAmount(all) ?: return null
-        if (PAID.containsMatchIn(all) && !Regex("""(?i)\b(earn up to|up to)\b""").containsMatchIn(all)) {
+        if (Patterns.isSecurityNoise(all)) return null
+        if (PAID.containsMatchIn(all) && !Patterns.isNoise(all) && !Regex("""(?i)\b(earn up to|up to)\b""").containsMatchIn(all)) {
             val merchant = Patterns.after("at", all) ?: Patterns.after("to", all)
                 ?: if (!Patterns.isGenericTitle(title)) Patterns.cleanMerchant(title) else ""
             return ParsedPayment(
@@ -183,19 +278,21 @@ object ShopBackParser : NotificationParser {
 
 /**
  * FairPrice Group app: FairPrice Pay / Scan & Go payments and e-receipts.
- * LinkPoints-only messages and promotions are ignored (they have no S$ amount or match the noise filter).
+ * The app pushes many promotions with dollar amounts ("$5 off", "only $3.95"), so a notification is
+ * only recorded when it reads like a confirmed payment ("you paid", "payment successful", "e-receipt",
+ * a card's last 4 digits). LinkPoints messages are ignored.
  */
 object FairPriceParser : NotificationParser {
-    private val PAID = Regex(
-        """(?i)\b(paid|payment|purchase|transaction|e-?receipt|receipt|charged|spent|order (placed|confirmed))\b"""
-    )
-    private val PROMO = Regex("""(?i)\b(min(imum)? spend|spend \S+ (and|&) (get|earn)|off your|coupon|weekly deals?|members? (price|exclusive))\b""")
+    private val STORE_BEFORE_AMOUNT = Regex("""(?m)^\s*([^:\n$]{3,60}?)\s*:\s*(?:S\$|SGD\s?|\$)\s?\d""")
+    private val NOT_SPEND = Regex("""(?i)\blink\s?points?\b(?!.*\b(paid|payment)\b)|\b(points? (earned|expir\w*)|redeem(ed)?)\b""")
 
     override fun parse(title: String, text: String): ParsedPayment? {
         val all = "$title\n$text"
-        if (Patterns.isNoise(all) || PROMO.containsMatchIn(all) || !PAID.containsMatchIn(all)) return null
+        if (Patterns.isSecurityNoise(all) || !Patterns.isConfirmedPayment(all) || NOT_SPEND.containsMatchIn(all)) return null
         val amount = Patterns.firstAmount(all) ?: return null
-        val merchant = Patterns.after("at", all)
+        // Real format: title "Payment successful", text "FairPrice Jurong Point: $3.65"
+        val merchant = STORE_BEFORE_AMOUNT.find(text)?.groupValues?.get(1)?.let { Patterns.cleanMerchant(it) }
+            ?: Patterns.after("at", all)
             ?: if (!Patterns.isGenericTitle(title)) Patterns.cleanMerchant(title) else "FairPrice"
         val card = Patterns.cardLast4(all)
         return ParsedPayment(

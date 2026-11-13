@@ -26,14 +26,16 @@ Reads notifications **only** from apps you tick in *Settings › Watched apps*. 
 | App | Package | What's recorded |
 |---|---|---|
 | Google Wallet | `com.google.android.apps.walletnfcrel` | GPay tap-to-pay: amount, merchant, card last 4 |
-| UOB TMRW | `com.uob.mighty.app` (+ alt IDs) | Card transactions, PayNow / FAST transfers out, money received |
+| UOB TMRW | `com.uob.mighty.app` (+ alt IDs) | Card transactions, PayNow / FAST transfers, money received; alerts without an amount become a [prompt](#missing-amount-prompts-uob-paynow) |
 | ShopBack | `com.shopback.app` | ShopBack Pay payments; cashback is attached to the matching payment |
 | FairPrice Group | `com.fairprice.mcomapp` | FairPrice Pay / Scan & Go payments and e-receipts |
 | SimplyGo | `sg.com.transitlink` | Bus/MRT fare charges and EZ-Link top-ups |
 | Any other app you tick | — | Generic parser: needs an S$ amount and a payment word ("paid", "debited"…) |
 
 How capture works:
-- **Notification filtering:** OTPs, promotions, PayNow requests, declined/failed payments, low-balance warnings and service notices are ignored.
+- **Notification filtering:** OTPs, PayNow requests, declined/failed payments, low-balance warnings and service notices are always ignored.
+- **Promotions:** marketing wording ("50% OFF", "U.P. $6.50", "$10 voucher", "sign up now", "don't miss out") blocks a notification unless it also reads like a confirmed payment, so a real alert "at FLASH COFFEE" still gets through.
+- **FairPrice is stricter:** it pushes many promos with prices, so its notifications are only recorded with confirmation wording such as "Payment successful", "you paid" or "e-receipt". The store name is taken from "FairPrice Jurong Point: $3.65".
 - **Direction:** "received / credited" becomes Income, "refund / reversal" becomes Refund, everything else is an Expense.
 - **Transit detection:** a card alert "at BUS/MRT SINGAPORE SG" (how SimplyGo bank-card fares appear) is recorded as a *SimplyGo* fare under *Transport*.
 - **Duplicate merging:** one GPay tap often fires both a Google Wallet notification and a UOB card alert. Two captures are merged into one record when they have the same amount and type, come from different apps, and are within 10 minutes of each other. The merged record keeps the more specific payment method and the more descriptive merchant name, and fills in the card/account.
@@ -42,6 +44,19 @@ How capture works:
 - **Capture log:** *Settings › Capture log* keeps every notification from watched apps for 30 days, marked *Saved*, *Merged*, *Cashback* or *Ignored*. The text can be selected and copied, for adding new formats.
 - **Pause switch:** capture can be paused without revoking notification access.
 - **Updates:** apps added to the default list in later versions are switched on once, without re-adding apps you unticked.
+
+#### Missing-amount prompts (UOB PayNow)
+UOB's PayNow and FAST alerts often have no amount, e.g. "UOB - Your PayNow transfer to KOPI CORNER on 13-Nov-2026 is successful." Instead of dropping these:
+- **Pop-down notification:** SG Expense posts its own heads-up notification, "UOB PayNow transfer — add amount?", showing the payee and time. It has three ways to respond:
+  - **Enter amount:** type into the notification itself, e.g. `12.50 Koufu` or just `12.50`. The amount can be anywhere in the text; the rest becomes the merchant, and UOB's payee name is kept in the note.
+  - **Tap the notification:** opens a small popup over whatever app is open, with amount, payee, Expense/Income and category. The keypad's ✓ saves. Picking a category teaches the app for next time.
+  - **Not a payment:** dismisses it.
+- **Nothing is lost:** prompts you ignore wait in a **Needs amount** list on Home, with *Add* and dismiss buttons.
+- **No duplicate prompts:**
+  - If UOB also sent the detailed alert with the amount ("transfer of SGD 50.00 to …") for the same payee within 3 minutes, no prompt is shown. If that alert arrives later, the prompt is cleared automatically.
+  - A card alert without an amount is skipped when Google Wallet already captured the payment.
+  - A repeat UOB alert within a minute is ignored.
+- **Requirements:** Android 13+ needs SG Expense to be allowed to post notifications; Home shows an *Allow* banner until it is. You can switch prompts off in *Settings › Ask for missing amounts*.
 
 ### 3. Image import (on-device OCR)
 *Import › Images* (pick up to 30), or share images into the app from Gallery, Files or Google Drive.
@@ -128,6 +143,7 @@ How the matching works:
 ## Permissions and privacy
 
 - **Notification access** (granted by you in system settings): needed for auto-capture. Only watched apps' notifications are processed.
+- **Post notifications** (Android 13+, asked from Home): only used for the missing-amount prompts.
 - **No account, no server:** the app doesn't upload your data anywhere. It only leaves the phone through Android's own backup, or a backup/export file you choose to save.
 - **Libraries add INTERNET:** the final manifest includes `INTERNET`, which Google ML Kit and WorkManager pull in. OCR itself runs on the device, but ML Kit may send anonymous usage logs to Google.
 - **Photos and files:** read through the system photo picker and file picker. No storage permission is requested.
@@ -146,7 +162,9 @@ app/src/main/java/com/sgexpense/
 │   └── repository/   ExpenseRepository, Categorizer (keyword matching / learning), Defaults (seed data)
 ├── capture/
 │   ├── PaymentNotificationListener.kt   NotificationListenerService
-│   ├── CaptureProcessor.kt              parse → de-dup/merge → save → log
+│   ├── CaptureProcessor.kt              parse → de-dup/merge → save → log; missing-amount prompts
+│   ├── AmountPrompt.kt                  prompt notification, inline-reply receiver, save/dismiss
+│   ├── QuickEntry.kt / PayeeMatcher.kt  "12.50 Koufu" parsing; masked-name matching ("HWAXX")
 │   ├── Deduplicator.kt                  cross-app merge rules
 │   ├── CaptureSettings.kt               watched apps, notification-access checks
 │   └── parsers/NotificationParsers.kt   Google Wallet, UOB, ShopBack, FairPrice, SimplyGo, generic
@@ -155,7 +173,7 @@ app/src/main/java/com/sgexpense/
 │   ├── sheet/        SheetReader (content sniffing), Xlsx/Xls/Csv/HtmlTable readers, StatementMapper
 │   └── ImportService.kt                 review items, duplicate flags, saved column mappings, commit
 ├── backup/           BackupManager (JSON, CSV, XLSX), XlsxWriter, weekly BackupWorker
-├── ui/               Compose screens: home, edit, list, stats, importer, settings, theme, components
+├── ui/               Compose screens: home, edit, list, stats, importer, settings, quickadd (popup), theme, components
 └── util/             Money (cents parse/format), DateParsing (SG date formats), Time (SGT helpers)
 ```
 
@@ -193,8 +211,9 @@ Build notes:
 Unit tests (JVM, `./gradlew :app:testDebugUnitTest`):
 - **`CaptureParsersTest`** covers:
   - Notification parsing for Google Wallet, UOB card / PayNow out / PayNow in, ShopBack payment and cashback, FairPrice Pay, SimplyGo fares and top-ups, and the generic parser.
-  - Filtering of OTP, promotion and request notifications.
+  - Filtering of OTP, promotion and request notifications, including real FairPrice promos with prices.
   - Cross-app de-duplication and merging.
+  - UOB alerts without an amount (real PayNow / FAST wording), quick-entry parsing ("12.50 Koufu", "7-Eleven 5.20") and masked payee matching.
 - **`ImportParsersTest`** covers:
   - Money and date parsing.
   - OCR row grouping, receipt totals, transaction-list screenshots, PayNow confirmations and SimplyGo journeys.
@@ -206,6 +225,10 @@ Unit tests (JVM, `./gradlew :app:testDebugUnitTest`):
 ## Limitations and tuning
 
 - **Notification wording is best-effort.** It's based on known formats and can change with app updates. If a real payment shows as *Ignored* in *Settings › Capture log*, copy the text and add a case to `capture/parsers/NotificationParsers.kt` with a test in `CaptureParsersTest.kt`.
+- **Testing a notification without waiting for a real one:** debug builds include a receiver that only `adb shell` can call (it's protected by the `DUMP` permission). It feeds a notification through the capture pipeline as if it came from any app:
+  ```bash
+  adb shell "am broadcast -n com.sgexpense/.debug.SimulateNotificationReceiver --es pkg com.uob.mighty.app --es title 'UOB TMRW' --es text 'UOB - Your PayNow transfer to KOPI CORNER on 13-Nov-2026 is successful.'"
+  ```
 - **SimplyGo bank-card fares are daily totals.** Banks combine them into one charge per day, sometimes delayed, so captured fares are per day rather than per ride. For ride-level detail, import screenshots of SimplyGo journey history.
 - **SGD only:** foreign-currency amounts aren't converted.
 - **OCR accuracy depends on image quality.** Always check the review screen before importing.

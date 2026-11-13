@@ -74,6 +74,8 @@ fun SettingsScreen(onCategories: () -> Unit, onWatchedApps: () -> Unit, onCaptur
     var hasAccess by remember { mutableStateOf(capture.hasNotificationAccess()) }
     var batteryOk by remember { mutableStateOf(true) }
     var enabled by remember { mutableStateOf(capture.enabled) }
+    var promptsOn by remember { mutableStateOf(capture.promptMissingAmount) }
+    var canNotify by remember { mutableStateOf(capture.canPostNotifications()) }
     var autoUri by remember { mutableStateOf(backup.autoBackupUri) }
     var refresh by remember { mutableIntStateOf(0) }
     var pendingRestore by remember { mutableStateOf<Uri?>(null) }
@@ -81,6 +83,7 @@ fun SettingsScreen(onCategories: () -> Unit, onWatchedApps: () -> Unit, onCaptur
 
     LifecycleResumeEffect(Unit) {
         hasAccess = capture.hasNotificationAccess()
+        canNotify = capture.canPostNotifications()
         batteryOk = (context.getSystemService(PowerManager::class.java)).isIgnoringBatteryOptimizations(context.packageName)
         refresh++
         onPauseOrDispose { }
@@ -128,6 +131,19 @@ fun SettingsScreen(onCategories: () -> Unit, onWatchedApps: () -> Unit, onCaptur
                 headlineContent = { Text("Capture payments") },
                 supportingContent = { Text("Pause without revoking access") },
                 trailingContent = { Switch(enabled, { enabled = it; capture.enabled = it }) },
+            )
+            ListItem(
+                headlineContent = { Text("Ask for missing amounts") },
+                supportingContent = {
+                    Text(
+                        if (promptsOn && !canNotify) "Turned on, but SG Expense notifications are blocked — tap to allow"
+                        else "When a UOB alert (e.g. PayNow) has no amount, pop up a notification so you can type it"
+                    )
+                },
+                trailingContent = { Switch(promptsOn, { promptsOn = it; capture.promptMissingAmount = it }) },
+                modifier = Modifier.clickable(enabled = promptsOn && !canNotify) {
+                    context.startActivity(com.sgexpense.ui.home.appNotificationSettings(context))
+                },
             )
             SettingRow("Watched apps", "${capture.watched.value.size} apps", Icons.Filled.Apps, onWatchedApps)
             SettingRow("Capture log", "Raw notifications from the last 30 days", Icons.AutoMirrored.Filled.ReceiptLong, onCaptureLog)

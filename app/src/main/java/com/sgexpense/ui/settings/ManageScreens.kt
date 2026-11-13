@@ -272,6 +272,11 @@ fun CaptureLogScreen(onBack: () -> Unit, onOpenTransaction: (Long) -> Unit) {
                     CaptureProcessor.OUTCOME_PARSED -> "Saved" to MaterialTheme.colorScheme.primary
                     CaptureProcessor.OUTCOME_MERGED -> "Merged (duplicate alert)" to MaterialTheme.colorScheme.tertiary
                     CaptureProcessor.OUTCOME_CASHBACK -> "Cashback" to MaterialTheme.colorScheme.tertiary
+                    CaptureProcessor.OUTCOME_NEEDS_AMOUNT -> "Waiting for amount" to MaterialTheme.colorScheme.secondary
+                    CaptureProcessor.OUTCOME_COMPLETED -> "Saved (amount typed)" to MaterialTheme.colorScheme.primary
+                    CaptureProcessor.OUTCOME_DISMISSED -> "Not a payment" to MaterialTheme.colorScheme.onSurfaceVariant
+                    CaptureProcessor.OUTCOME_DUPLICATE_PROMPT -> "Duplicate alert" to MaterialTheme.colorScheme.onSurfaceVariant
+                    CaptureProcessor.OUTCOME_COVERED -> "Already captured by another app" to MaterialTheme.colorScheme.tertiary
                     else -> "Ignored" to MaterialTheme.colorScheme.onSurfaceVariant
                 }
                 val appName = CaptureSettings.KNOWN_APPS[log.packageName] ?: log.packageName

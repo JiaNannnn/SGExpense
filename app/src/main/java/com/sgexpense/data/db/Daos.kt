@@ -124,6 +124,26 @@ interface CaptureLogDao {
     @Query("DELETE FROM capture_log WHERE postedAt < :before")
     suspend fun deleteOlderThan(before: Long)
 
+    @Query("SELECT * FROM capture_log WHERE id = :id")
+    suspend fun getById(id: Long): CaptureLog?
+
+    @Query("UPDATE capture_log SET outcome = :outcome, transactionId = :txId WHERE id = :id")
+    suspend fun setOutcome(id: Long, outcome: String, txId: Long?)
+
+    /** UOB alerts waiting for the user to type an amount. */
+    @Query("SELECT * FROM capture_log WHERE outcome = 'NEEDS_AMOUNT' ORDER BY postedAt DESC")
+    fun observePending(): Flow<List<CaptureLog>>
+
+    @Query("SELECT COUNT(*) FROM capture_log WHERE packageName = :pkg AND outcome = 'NEEDS_AMOUNT' AND postedAt >= :since")
+    suspend fun countPendingSince(pkg: String, since: Long): Int
+
+    @Query("SELECT * FROM capture_log WHERE packageName = :pkg AND outcome = 'NEEDS_AMOUNT' AND postedAt BETWEEN :from AND :to")
+    suspend fun pendingBetween(pkg: String, from: Long, to: Long): List<CaptureLog>
+
+    /** Transactions created by the bank's own alert (with an amount), not typed in from a prompt. */
+    @Query("SELECT transactionId FROM capture_log WHERE outcome = 'PARSED' AND transactionId IS NOT NULL AND postedAt BETWEEN :from AND :to")
+    suspend fun parsedTxIdsBetween(from: Long, to: Long): List<Long>
+
     @Query("DELETE FROM capture_log")
     suspend fun deleteAll()
 }
